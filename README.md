@@ -27,3 +27,13 @@
 * Data string from sensors used for http request is stored on SD card (file: datalog.txt)
 * Old data stored on SD card can be deleted uncommenting lines 95-100
 * Stored data format: &CO2=409&TVOC=1&temp_bmp280=28.39&pressure=99687.62&altitude_bmp280=137.22&humidity=61.50&temperature=26.60&pm1.0=6&pm2.5=9&pm10.0=10
+
+
+## **Standby mode with RTC alarm wakeup:**
+
+* RTC functionalities added (including RTC alarm)
+* RTC alarm is setted to current time + INTERVAL (time interval constant)
+* When alarm is detected, sensors data are written to SD card
+* Debug mode was implemented: in this mode standby is disabled and data are sent to serial bus
+* Debug mode other important role is to avoid deathlock (board can't be accessed any more over the USB, in order to be programmed)
+* To activate Debug mode: tie pin 3 to the ground (GND) when board power is off
