@@ -27,6 +27,8 @@
 #include <Adafruit_BMP280.h>  // https://github.com/adafruit/Adafruit_BMP280_Library
 #include "DHT.h"              // https://github.com/adafruit/DHT-sensor-library
 #include "PMS.h"              // https://github.com/fu-hsi/pms
+  
+#include <SD.h>               // https://www.arduino.cc/en/Reference/SD
 
 #define BMP_CS    7           // nCS (chip select) for BMP sensor
 #define DHTPIN    2           // Digital pin connected to the DHT sensor
@@ -37,6 +39,13 @@ Adafruit_BMP280 bmp(BMP_CS);  // hardware SPI
 DHT dht(DHTPIN, DHTTYPE);
 PMS pms(Serial1);
 PMS::DATA data;
+
+// set up variables using the SD utility library functions:
+const int chipSelect = 4;     // MKR SD PROTO SHIELD chip select pin
+File myFile;                  // SD card file 
+bool SDInitFlag = false;      // shows if SD card was successfuly initialized
+
+String sensorsData = "";      // sensors data string to write on card and for http request
 
 void setup() {
   Serial.begin(9600);
@@ -69,6 +78,27 @@ void setup() {
                   Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
 
   dht.begin();
+
+  // SD card initialization section
+  Serial.println();
+  Serial.println("Initializing SD card...");
+
+  if (!SD.begin(chipSelect)) {
+    Serial.println("Initialization failed!");
+  }
+  else
+  {
+    SDInitFlag = true;
+    Serial.println("Initialization done.");
+    Serial.println();
+    // delete the old data file if you want a fresh start
+//    if(SD.exists("datalog.txt"))
+//    {
+//      Serial.println("Removing datalog.txt...");
+//      SD.remove("datalog.txt");
+//      Serial.println();
+//    }
+  }
 }
 
 void loop() {
@@ -76,10 +106,15 @@ void loop() {
   Serial.println("CCS811:");
   if(ccs.available()){
     if(!ccs.readData()){
+      uint16_t co2 = ccs.geteCO2();
+      uint16_t tvoc = ccs.getTVOC();
+      // add ccs811 data to string
+      sensorsData = "&CO2=" + String(co2, DEC);
+      sensorsData += "&TVOC=" + String(tvoc, DEC);
       Serial.print("CO2 = ");
-      Serial.print(ccs.geteCO2());
+      Serial.print(co2);
       Serial.print("ppm, TVOC = ");
-      Serial.println(ccs.getTVOC());
+      Serial.println(tvoc);
     }
     else{
       Serial.println("Failed to read from CCS811 sensor!");
@@ -88,38 +123,47 @@ void loop() {
   Serial.println();
   
   // BMP280 section
+  float temp_bmp280 = bmp.readTemperature();
+  float pressure_bmp280 = bmp.readPressure();
+  float altitude_bmp280 = bmp.readAltitude(1013.25);
+  // add bmp280 data to string
+  sensorsData += "&temp_bmp280=" + String(temp_bmp280, 2);
+  sensorsData += "&pressure=" + String(pressure_bmp280, 2);
+  sensorsData += "&altitude_bmp280=" + String(altitude_bmp280, 2);
   Serial.println("BMP280:");
   Serial.print("Temperature = ");
-  Serial.print(bmp.readTemperature());
+  Serial.print(temp_bmp280);
   Serial.println(" °C");
 
   Serial.print("Pressure = ");
-  Serial.print(bmp.readPressure());
+  Serial.print(pressure_bmp280);
   Serial.println(" Pa");
 
   Serial.print("Approx altitude = ");
-  Serial.print(bmp.readAltitude(1013.25)); /* Adjusted to local forecast! */
+  Serial.print(altitude_bmp280); /* Adjusted to local forecast! */
   Serial.println(" m");
   Serial.println();
 
   // DHT22 section
   // Reading temperature or humidity takes about 250 milliseconds!
   // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
-  float h = dht.readHumidity();
+  float humidity_dht22 = dht.readHumidity();
   // Read temperature as Celsius (the default)
-  float t = dht.readTemperature();
-
+  float temp_dht22 = dht.readTemperature();
   // Check if any reads failed and exit early (to try again).
-  if (isnan(h) || isnan(t)) {
+  if (isnan(humidity_dht22) || isnan(temp_dht22)) {
     Serial.println("Failed to read from DHT sensor!");
   }
   else
   {
+    // add dht22 data to string
+    sensorsData += "&humidity=" + String(humidity_dht22, 2);
+    sensorsData += "&temperature=" + String(temp_dht22, 2);
     Serial.println("DHT22:");
     Serial.print("Humidity = ");
-    Serial.print(h);
+    Serial.print(humidity_dht22);
     Serial.print("%  Temperature = ");
-    Serial.print(t);
+    Serial.print(temp_dht22);
     Serial.println("°C");
   }
   Serial.println();
@@ -128,21 +172,45 @@ void loop() {
   Serial.println("PMS5003:");
   if (pms.readUntil(data, 2000))
   {
+    uint16_t pm1_0 = data.PM_AE_UG_1_0;
+    uint16_t pm2_5 = data.PM_AE_UG_2_5;
+    uint16_t pm10_0 = data.PM_AE_UG_10_0;
+    // add pms5003 data to string
+    sensorsData += "&pm1.0=" + String(pm1_0, DEC);
+    sensorsData += "&pm2.5=" + String(pm2_5, DEC);
+    sensorsData += "&pm10.0=" + String(pm10_0, DEC);
     Serial.print("PM 1.0 = ");
-    Serial.print(data.PM_AE_UG_1_0);
+    Serial.print(pm1_0);
     Serial.println("ug/m3");
 
     Serial.print("PM 2.5 = ");
-    Serial.print(data.PM_AE_UG_2_5);
+    Serial.print(pm2_5);
     Serial.println("ug/m3");
 
     Serial.print("PM 10.0 = ");
-    Serial.print(data.PM_AE_UG_10_0);
+    Serial.print(pm10_0);
     Serial.println("ug/m3");
   }
   else
   {
     Serial.println("Failed to read from PMS5003 sensor!");
+  }
+  Serial.println();
+  
+  // write sensors data string to datalog.txt file on SDcard
+  if(SDInitFlag)
+  {
+    myFile = SD.open("datalog.txt", FILE_WRITE);
+    if(myFile)
+    {
+      Serial.println("Writing data to datalog.txt...");
+      myFile.println(sensorsData);
+      myFile.close();
+    }
+    else
+    {
+      Serial.println("Error opening test.txt");
+    }
   }
   Serial.println();
   
